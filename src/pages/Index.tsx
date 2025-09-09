@@ -1,0 +1,651 @@
+import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Search,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  PieChart,
+  Plus,
+  Bell,
+  Upload,
+} from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { QRCodeCanvas } from "qrcode.react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { StockCard } from "@/components/trading/StockCard";
+import { TradingModal } from "@/components/trading/TradingModal";
+import { Stock, Notification } from "@/types/trading";
+import { getUserProfile } from "@/services/firebaseApi";
+import { getUserHolding } from "@/services/userHolding";
+import { createFundRequest } from "@/services/fundRequestsApi";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { db } from "@/integrations/firebase/client";
+import {
+  fetchMultipleCryptos,
+  generatePriceHistory,
+} from "@/services/stockApi";
+import { getMerchantUpi } from "@/services/merchantApi";
+import { useAuth } from "@/hooks/useAuth";
+import { toast } from "sonner";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from "recharts";
+
+const Index = () => {
+  const navigate = useNavigate();
+  // Auth
+  const { user } = useAuth();
+  // State variables
+  const [stocks, setStocks] = useState<Stock[]>([]);
+  const [userName, setUserName] = useState<string | null>(null);
+  const [userBalance, setUserBalance] = useState<number>(0);
+  const [portfolioValue, setPortfolioValue] = useState<number>(0);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [tradingType, setTradingType] = useState<"BUY" | "SELL">("BUY");
+  const [userHoldingForModal, setUserHoldingForModal] = useState<number>(0);
+  const [isAddFundsOpen, setIsAddFundsOpen] = useState<boolean>(false);
+  const [isWithdrawOpen, setIsWithdrawOpen] = useState<boolean>(false);
+  const [withdrawAmount, setWithdrawAmount] = useState<string>("");
+  const [withdrawUpi, setWithdrawUpi] = useState<string>("");
+  const [withdrawLoading, setWithdrawLoading] = useState<boolean>(false);
+  const [addAmount, setAddAmount] = useState<string>("");
+  const qrRef = useRef<HTMLCanvasElement | null>(null);
+  const [upiId, setUpiId] = useState<string>("");
+  const [qrValue, setQrValue] = useState<string>("");
+  const [isUploadDialogOpen, setIsUploadDialogOpen] = useState<boolean>(false);
+  const [txnId, setTxnId] = useState<string>("");
+  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [selectedUpiApp, setSelectedUpiApp] = useState<string>("");
+  const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+
+  // Load data on mount
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([loadStocks(), loadUserData(), loadMerchantUpi()]).finally(() =>
+      setLoading(false)
+    );
+    // eslint-disable-next-line
+  }, []);
+
+  const loadMerchantUpi = async () => {
+    const upi = await getMerchantUpi();
+    setUpiId(upi || "");
+    console.log("upi", upi)
+    setQrValue(upi ? `upi://pay?pa=${upi}&pn=WellFire&am=0&cu=INR` : "");
+  };
+  const loadStocks = async () => {
+    try {
+      // Fetch real crypto market data from CoinGecko
+      const marketData = await fetchMultipleCryptos();
+      // Map CoinGecko MarketData to Stock type for UI compatibility
+      const stocksData: Stock[] = marketData.map((md) => ({
+        id: md.id || md.symbol,
+        stock_code: md.symbol,
+        stock_name: md.name || md.symbol || md.id,
+        price: md.price,
+        change_percent: md.changePercent,
+        change_amount: md.change,
+        price_history:
+          md.price_history && md.price_history.length > 0
+            ? md.price_history
+            : generatePriceHistory(md.price),
+        updated_at: new Date().toISOString(),
+        sector: "Crypto",
+        market_cap: md.marketCap,
+        volume: md.volume,
+        iconUrl: md.iconUrl || "",
+      }));
+      setStocks(stocksData);
+      setLastUpdated(new Date().toLocaleString());
+    } catch (error) {
+      toast.error("Failed to load crypto data");
+    }
+  };
+
+  const loadUserData = async () => {
+    try {
+      const profile = await getUserProfile();
+      if (profile) {
+        setUserBalance(profile.wallet_balance);
+        setPortfolioValue(profile.total_portfolio_value);
+        setUserName(profile.name || null);
+      }
+    } catch (error) {
+      console.error("Error loading user data:", error);
+    }
+  };
+
+  const loadNotifications = async () => {
+    // Notification loading removed (function does not exist)
+  };
+
+  const handleBuy = (stock: Stock) => {
+    setSelectedStock(stock);
+    setTradingType("BUY");
+    setIsModalOpen(true);
+  };
+
+  const handleSell = (stock: Stock) => {
+    // Fetch user holding before opening modal
+    getUserHolding(stock.id).then((holding) => {
+      setSelectedStock(stock);
+      setTradingType("SELL");
+      setUserHoldingForModal(holding);
+      setIsModalOpen(true);
+    });
+  };
+
+  const handleTradeSuccess = () => {
+    // Refresh data after successful trade
+    loadStocks();
+  };
+
+  // Show all cryptos matching search (no limit)
+  const filteredStocks = stocks.filter((stock) => {
+    const query = searchQuery.trim().toLowerCase();
+    return (
+      stock.stock_code.toLowerCase().includes(query) ||
+      stock.stock_name.toLowerCase().includes(query) ||
+      query === ""
+    );
+  });
+
+  const totalGainers = stocks.filter((s) => s.change_percent > 0).length;
+  const totalLosers = stocks.filter((s) => s.change_percent < 0).length;
+
+  return (
+    <div className="space-y-6">
+      {/* Last Updated Timestamp */}
+      {lastUpdated && (
+        <div className="text-xs text-muted-foreground text-right">
+          Last updated: {lastUpdated}
+        </div>
+      )}
+
+      {/* Welcome Header - Responsive Professional Layout */}
+      <div className="w-full">
+        <div className="flex flex-col md:flex-row md:items-center w-full gap-2 md:gap-0">
+          <div className="flex-grow min-w-0 max-w-2xl overflow-visible">
+            <h1 className="text-2xl md:text-3xl font-bold break-words whitespace-normal md:whitespace-pre-line md:overflow-visible md:text-ellipsis">
+              Welcome back,{" "}
+              {userName && userName !== user?.email ? userName : "Trader"}!
+            </h1>
+            <p className="text-muted-foreground text-base md:text-lg">
+              Ready to make some trades today?
+            </p>
+          </div>
+          {/* Desktop: Deposit & Withdraw buttons side by side */}
+          <div className="hidden md:flex gap-2 items-center flex-shrink-0">
+            <Button className="gap-2" onClick={() => setIsAddFundsOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Deposit
+            </Button>
+            <Button
+              className="gap-2"
+              variant="outline"
+              onClick={() => setIsWithdrawOpen(true)}
+            >
+              Withdraw
+            </Button>
+          </div>
+        </div>
+        {/* Mobile: Deposit & Withdraw below subheading, horizontal */}
+        <div className="flex md:hidden gap-2 mt-4">
+          <Button
+            className="flex-1 gap-2"
+            onClick={() => setIsAddFundsOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            Deposit
+          </Button>
+          <Button
+            className="flex-1 gap-2"
+            variant="outline"
+            onClick={() => setIsWithdrawOpen(true)}
+          >
+            Withdraw
+          </Button>
+          {/* Withdraw Modal */}
+          <Dialog open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Withdraw Funds to UPI</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col gap-4">
+                <input
+                  type="number"
+                  placeholder="Enter amount to withdraw"
+                  className="w-full p-2 border rounded"
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  min={1}
+                />
+                <input
+                  type="text"
+                  placeholder="Enter your UPI ID (e.g. user@bank)"
+                  className="w-full p-2 border rounded"
+                  value={withdrawUpi}
+                  onChange={(e) => setWithdrawUpi(e.target.value)}
+                />
+                <Button
+                  className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
+                  disabled={withdrawLoading || !withdrawAmount || !withdrawUpi}
+                  onClick={async () => {
+                    if (!user) {
+                      toast.error("User not logged in");
+                      return;
+                    }
+                    const amountNum = Number(withdrawAmount);
+                    if (isNaN(amountNum) || amountNum < 1) {
+                      toast.error("Enter a valid amount");
+                      return;
+                    }
+                    if (amountNum > portfolioValue) {
+                      toast.error(
+                        "Withdrawal amount cannot exceed your portfolio value"
+                      );
+                      return;
+                    }
+                    // UPI ID validation: must be like name@bank (alphanumeric, dots, dashes, underscores allowed)
+                    const upiRegex = /^[\w.-]+@[\w.-]+$/;
+                    if (!upiRegex.test(withdrawUpi)) {
+                      toast.error("Enter a valid UPI ID (e.g. user@bank)");
+                      return;
+                    }
+                    setWithdrawLoading(true);
+                    try {
+                      await addDoc(collection(db, "withdraw_requests"), {
+                        user_id: user.uid,
+                        amount: amountNum,
+                        upi_id: withdrawUpi,
+                        status: "PENDING",
+                        created_at: serverTimestamp(),
+                      });
+                      toast.success(
+                        "Withdrawal request submitted! Admin will verify and process."
+                      );
+                      setIsWithdrawOpen(false);
+                      setWithdrawAmount("");
+                      setWithdrawUpi("");
+                    } catch (err) {
+                      toast.error(
+                        "Failed to submit withdrawal request. Try again."
+                      );
+                    }
+                    setWithdrawLoading(false);
+                  }}
+                >
+                  Submit Withdrawal Request
+                </Button>
+                <div className="text-xs text-muted-foreground mt-2">
+                  Withdrawal requests are processed by admin. You will be
+                  notified after approval.
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {/* Add Funds Modal (Professional UI) */}
+      {/* <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deposit Funds via UPI</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col md:flex-row gap-6 items-center justify-center mt-2">
+            <div className="flex flex-col items-center gap-2">
+              <QRCodeCanvas
+                ref={qrRef}
+                value={qrValue}
+                size={180}
+                includeMargin={true}
+                className="border rounded-xl shadow-lg bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 cursor-pointer"
+                onClick={() => {
+                  const canvas = document.querySelector('canvas');
+                  if (canvas) {
+                    const url = canvas.toDataURL('image/png');
+                    navigator.clipboard.writeText(qrValue);
+                    toast.success('Payment QR UPI link copied!');
+                  }
+                }}
+              />
+              <div className="text-xs text-muted-foreground mt-1 text-center max-w-xs">
+                Scan this QR in your UPI app, <b>enter the amount manually</b>, and pay to <b>{upiId || 'UPI not set'}</b>.<br />
+                After payment, enter the UPI Reference/Transaction ID and upload screenshot for admin approval.
+              </div>
+              <Button
+                variant="outline"
+                className="w-full mt-2"
+                onClick={() => {
+                  const canvas = document.querySelector('canvas');
+                  if (canvas) {
+                    const url = canvas.toDataURL('image/png');
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'upi-qr.png';
+                    a.click();
+                  }
+                }}
+              >
+                Download QR Code
+              </Button>
+              <div className="text-xs text-muted-foreground mt-1">Scan with any UPI app</div>
+            </div>
+            <div className="flex flex-col gap-2 w-full max-w-xs">
+              <div className="font-semibold text-sm">UPI ID:</div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-base bg-gray-100 px-2 py-1 rounded">{upiId || 'UPI not set'}</span>
+                <Button size="sm" variant="ghost" onClick={() => {navigator.clipboard.writeText(upiId); toast.success('UPI ID copied!')}}>
+                  Copy
+                </Button>
+              </div>
+              <div className="mt-2">
+                <input
+                  type="number"
+                  placeholder="Enter amount"
+                  className="w-full p-2 border rounded"
+                  value={addAmount}
+                  onChange={e => setAddAmount(e.target.value)}
+                />
+              </div>
+              {/* Two buttons in a row: Generate QR and Continue */}
+      {/* <div className="grid grid-cols-2 gap-3 mt-4">
+                <Button
+                  style={{ backgroundColor: '#22c55e', color: 'white' }}
+                  className="w-full hover:bg-green-700 active:scale-95 transition-transform"
+                  disabled={!addAmount}
+                  onClick={() => {
+                    if (!upiId) { toast.error('UPI ID not set'); return; }
+                    const newQr = `upi://pay?pa=${upiId}&pn=WellFire&am=${addAmount}&cu=INR`;
+                    setQrValue(newQr);
+                    toast.success('Payment QR generated!');
+                  }}
+                >
+                  Generate Payment QR
+                </Button>
+                <Button
+                  className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
+                  onClick={() => setIsUploadDialogOpen(true)}
+                  disabled={!addAmount}
+                >
+                  Continue
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground mt-2">After payment, enter the UPI Reference/Transaction ID and upload screenshot for admin approval.</div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog> 
+      */}
+
+<Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
+  <DialogContent>
+    <DialogHeader>
+      <DialogTitle>Deposit Funds via UPI</DialogTitle>
+    </DialogHeader>
+
+    <div className="grid grid-cols-2 gap-3 mt-4">
+      {/* 🔹 Direct UPI Button */}
+      <Button
+        style={{ backgroundColor: "#22c55e", color: "white" }}
+        className="w-full hover:bg-green-700 active:scale-95 transition-transform"
+        disabled={!addAmount}
+        onClick={() => {
+          if (!upiId) {
+            toast.error("UPI ID not set");
+            return;
+          }
+          console.log("upiid", upiId);
+          const upiLink = `upi://pay?pa=${upiId}&pn=WellFire&am=${addAmount}&cu=INR`;
+          window.location.href = upiLink; // 🚀 Open PhonePe / GPay / Paytm directly
+        }}
+      >
+        Pay with UPI
+      </Button>
+
+      {/* 🔹 Second button (upload screenshot) */}
+      <Button
+        className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
+        onClick={() => setIsUploadDialogOpen(true)}
+        disabled={!addAmount}
+      >
+        Continue
+      </Button>
+    </div>
+  </DialogContent>
+</Dialog>
+
+
+      {/* Upload Screenshot & Transaction ID Dialog */}
+      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Upload Payment Screenshot & Transaction ID
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <input
+              type="text"
+              placeholder="Transaction ID"
+              className="w-full p-2 border rounded"
+              value={txnId}
+              onChange={(e) => setTxnId(e.target.value)}
+            />
+            <label className="block">Payment Screenshot:</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => setScreenshot(e.target.files?.[0] || null)}
+            />
+            <Button
+              className="w-full mt-2"
+              onClick={async () => {
+                if (!txnId || !screenshot) {
+                  toast.error(
+                    "Please enter transaction ID and upload screenshot"
+                  );
+                  return;
+                }
+                if (!user) {
+                  toast.error("User not logged in");
+                  return;
+                }
+                let success = false;
+                let screenshot_url = "";
+                try {
+                  // Upload image to your PHP server
+                  const formData = new FormData();
+                  formData.append("image", screenshot);
+                  const res = await fetch(
+                    "https://lightgray-albatross-150482.hostingersite.com/upload_web.php",
+                    {
+                      method: "POST",
+                      body: formData,
+                    }
+                  );
+                  if (!res.ok) {
+                    const text = await res.text();
+                    toast.error("Image upload failed: " + text);
+                    throw new Error("Image upload failed: " + text);
+                  }
+                  const data = await res.json();
+                  screenshot_url = data.imageUrl || "";
+                  if (!screenshot_url) {
+                    toast.error("No image URL returned from server");
+                    throw new Error("No image URL returned");
+                  }
+                  // Save to Firestore
+                  await addDoc(collection(db, "fund_requests"), {
+                    user_id: user.uid,
+                    amount: Number(addAmount),
+                    txn_id: txnId,
+                    screenshot_url,
+                    status: "PENDING",
+                    created_at: serverTimestamp(),
+                  });
+                  success = true;
+                } catch (err) {
+                  console.error("Deposit error:", err);
+                  toast.error("Deposit error: " + (err?.message || err));
+                  success = false;
+                }
+                if (success) {
+                  toast.success(
+                    "Deposit request submitted! Admin will verify and approve."
+                  );
+                  setIsUploadDialogOpen(false);
+                  setIsAddFundsOpen(false);
+                  setAddAmount("");
+                  setTxnId("");
+                  setScreenshot(null);
+                  setSelectedUpiApp("");
+                } else {
+                  toast.error("Failed to submit deposit request. Try again.");
+                }
+              }}
+            >
+              Submit for Approval
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dashboard Stats - Always 4 columns on desktop, 2x2 on mobile, gainers/losers always horizontal */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Wallet Balance
+            </CardTitle>
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              ${userBalance.toLocaleString()}
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Portfolio Value
+            </CardTitle>
+            <PieChart className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              ${portfolioValue.toLocaleString()}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Total portfolio value
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Top Gainers</CardTitle>
+            <TrendingUp className="h-4 w-4 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">
+              {totalGainers}
+            </div>
+            <p className="text-xs text-muted-foreground">stocks in green</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Top Losers</CardTitle>
+            <TrendingDown className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">{totalLosers}</div>
+            <p className="text-xs text-muted-foreground">stocks in red</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Search Bar - Full width and responsive */}
+      <div className="w-full flex items-center justify-center mb-6">
+        <div className="relative w-full max-w-2xl">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+          <Input
+            placeholder="Search stocks..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10 w-full text-base py-3 rounded-xl"
+          />
+        </div>
+      </div>
+
+      {/* Stocks Grid */}
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...Array(6)].map((_, i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-4">
+                <div className="h-4 bg-muted rounded w-1/2 mb-2"></div>
+                <div className="h-8 bg-muted rounded w-1/3 mb-4"></div>
+                <div className="h-16 bg-muted rounded mb-4"></div>
+                <div className="flex gap-2">
+                  <div className="h-8 bg-muted rounded flex-1"></div>
+                  <div className="h-8 bg-muted rounded flex-1"></div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredStocks.map((stock) => (
+            <StockCard
+              key={stock.id}
+              stock={stock}
+              onBuy={handleBuy}
+              onSell={handleSell}
+              onGraphClick={() => navigate(`/detail/${stock.id}`)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Trading Modal */}
+      <TradingModal
+        stock={selectedStock}
+        type={tradingType}
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSuccess={handleTradeSuccess}
+        userBalance={userBalance}
+        userHolding={tradingType === "SELL" ? userHoldingForModal : 0}
+      />
+    </div>
+  );
+};
+
+export default Index;
