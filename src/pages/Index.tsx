@@ -81,7 +81,7 @@ const Index = () => {
   useEffect(() => {
     setLoading(true);
     // Set hardcoded UPI ID
-    const hardcodedUpiId = "7049866959@ybl";
+    const hardcodedUpiId = "wellfirecryptocompany@oksbi";
     if (!/^[\w.-]+@[\w.-]+$/.test(hardcodedUpiId)) {
       console.error("Hardcoded UPI ID is invalid:", hardcodedUpiId);
       toast.error("Invalid UPI ID configured. Contact support.");
