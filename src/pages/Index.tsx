@@ -176,6 +176,16 @@ const Index = () => {
   const totalGainers = stocks.filter((s) => s.change_percent > 0).length;
   const totalLosers = stocks.filter((s) => s.change_percent < 0).length;
 
+  // Function to open UPI app with any amount
+  const openUpiApp = (amount: string) => {
+    if (!upiId) {
+      toast.error("UPI ID not set");
+      return;
+    }
+    const upiUrl = `upi://pay?pa=${upiId}&pn=WellFire&am=${amount || '0'}&cu=INR`;
+    window.location.href = upiUrl; // Attempt to open UPI app
+  };
+
   return (
     <div className="space-y-6">
       {/* Last Updated Timestamp */}
@@ -311,134 +321,51 @@ const Index = () => {
       </div>
 
       {/* Add Funds Modal (Professional UI) */}
-      {/* <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
+      <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Deposit Funds via UPI</DialogTitle>
           </DialogHeader>
-          <div className="flex flex-col md:flex-row gap-6 items-center justify-center mt-2">
-            <div className="flex flex-col items-center gap-2">
-              <QRCodeCanvas
-                ref={qrRef}
-                value={qrValue}
-                size={180}
-                includeMargin={true}
-                className="border rounded-xl shadow-lg bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 cursor-pointer"
-                onClick={() => {
-                  const canvas = document.querySelector('canvas');
-                  if (canvas) {
-                    const url = canvas.toDataURL('image/png');
-                    navigator.clipboard.writeText(qrValue);
-                    toast.success('Payment QR UPI link copied!');
-                  }
-                }}
-              />
-              <div className="text-xs text-muted-foreground mt-1 text-center max-w-xs">
-                Scan this QR in your UPI app, <b>enter the amount manually</b>, and pay to <b>{upiId || 'UPI not set'}</b>.<br />
-                After payment, enter the UPI Reference/Transaction ID and upload screenshot for admin approval.
-              </div>
+          <div className="flex flex-col gap-4 mt-4">
+            <Input
+              type="number"
+              placeholder="Enter amount"
+              value={addAmount}
+              onChange={(e) => setAddAmount(e.target.value)}
+              className="w-full"
+              min={1}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              {/* Button to open UPI app with or without amount */}
               <Button
-                variant="outline"
-                className="w-full mt-2"
-                onClick={() => {
-                  const canvas = document.querySelector('canvas');
-                  if (canvas) {
-                    const url = canvas.toDataURL('image/png');
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'upi-qr.png';
-                    a.click();
-                  }
-                }}
+                style={{ backgroundColor: "#22c55e", color: "white", width: "100%" }}
+                className="hover:bg-green-700 active:scale-95 transition-transform"
+                onClick={() => openUpiApp(addAmount)}
               >
-                Download QR Code
+                Pay with UPI
               </Button>
-              <div className="text-xs text-muted-foreground mt-1">Scan with any UPI app</div>
+              {/* Continue with screenshot */}
+              <Button
+                className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
+                onClick={() => setIsUploadDialogOpen(true)}
+                disabled={!addAmount}
+              >
+                Continue
+              </Button>
             </div>
-            <div className="flex flex-col gap-2 w-full max-w-xs">
-              <div className="font-semibold text-sm">UPI ID:</div>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-base bg-gray-100 px-2 py-1 rounded">{upiId || 'UPI not set'}</span>
-                <Button size="sm" variant="ghost" onClick={() => {navigator.clipboard.writeText(upiId); toast.success('UPI ID copied!')}}>
-                  Copy
-                </Button>
-              </div>
-              <div className="mt-2">
-                <input
-                  type="number"
-                  placeholder="Enter amount"
-                  className="w-full p-2 border rounded"
-                  value={addAmount}
-                  onChange={e => setAddAmount(e.target.value)}
-                />
-              </div>
-              {/* Two buttons in a row: Generate QR and Continue */}
-      {/* <div className="grid grid-cols-2 gap-3 mt-4">
-                <Button
-                  style={{ backgroundColor: '#22c55e', color: 'white' }}
-                  className="w-full hover:bg-green-700 active:scale-95 transition-transform"
-                  disabled={!addAmount}
-                  onClick={() => {
-                    if (!upiId) { toast.error('UPI ID not set'); return; }
-                    const newQr = `upi://pay?pa=${upiId}&pn=WellFire&am=${addAmount}&cu=INR`;
-                    setQrValue(newQr);
-                    toast.success('Payment QR generated!');
-                  }}
-                >
-                  Generate Payment QR
-                </Button>
-                <Button
-                  className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
-                  onClick={() => setIsUploadDialogOpen(true)}
-                  disabled={!addAmount}
-                >
-                  Continue
-                </Button>
-              </div>
-              <div className="text-xs text-muted-foreground mt-2">After payment, enter the UPI Reference/Transaction ID and upload screenshot for admin approval.</div>
+            {/* UPI info & fallback instructions */}
+            <div className="text-sm text-muted-foreground mt-2 text-center leading-relaxed">
+              <p>
+                Tap <b>Pay with UPI</b> to open your preferred UPI app (like GPay, PhonePe, Paytm).
+              </p>
+              <p className="mt-1">
+                If it doesn’t open, manually send the amount to:
+              </p>
+              <p className="mt-1 font-mono text-base font-semibold">{upiId}</p>
             </div>
           </div>
         </DialogContent>
-      </Dialog> 
-      */}
-
-<Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
-  <DialogContent>
-    <DialogHeader>
-      <DialogTitle>Deposit Funds via UPI</DialogTitle>
-    </DialogHeader>
-
-    <div className="grid grid-cols-2 gap-3 mt-4">
-      {/* 🔹 Direct UPI Button */}
-      <Button
-        style={{ backgroundColor: "#22c55e", color: "white" }}
-        className="w-full hover:bg-green-700 active:scale-95 transition-transform"
-        disabled={!addAmount}
-        onClick={() => {
-          if (!upiId) {
-            toast.error("UPI ID not set");
-            return;
-          }
-          console.log("upiid", upiId);
-          const upiLink = `upi://pay?pa=${upiId}&pn=WellFire&am=${addAmount}&cu=INR`;
-          window.location.href = upiLink; // 🚀 Open PhonePe / GPay / Paytm directly
-        }}
-      >
-        Pay with UPI
-      </Button>
-
-      {/* 🔹 Second button (upload screenshot) */}
-      <Button
-        className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
-        onClick={() => setIsUploadDialogOpen(true)}
-        disabled={!addAmount}
-      >
-        Continue
-      </Button>
-    </div>
-  </DialogContent>
-</Dialog>
-
+      </Dialog>
 
       {/* Upload Screenshot & Transaction ID Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
