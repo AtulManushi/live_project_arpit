@@ -80,6 +80,7 @@ const Index = () => {
   const [selectedUpiApp, setSelectedUpiApp] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Load data on mount
   useEffect(() => {
@@ -91,16 +92,35 @@ const Index = () => {
   }, []);
 
   const loadMerchantUpi = async () => {
-    const upi = await getMerchantUpi();
-    setUpiId(upi || "");
-    console.log("upi", upi)
-    setQrValue(upi ? `upi://pay?pa=${upi}&pn=WellFire&am=0&cu=INR` : "");
+    // Hardcode a valid UPI ID - REPLACE WITH YOUR ACTUAL UPI ID
+    // const hardcodedUpiId = "wellfirecryptocompany@oksbi"; // e.g., "merchant@ybl"
+    const hardcodedUpiId = "7049866959@ybl";
+    if (!/^[\w.-]+@[\w.-]+$/.test(hardcodedUpiId)) {
+      console.error("Hardcoded UPI ID is invalid:", hardcodedUpiId);
+      toast.error("Invalid UPI ID configured. Contact support.");
+      return;
+    }
+    setUpiId(hardcodedUpiId);
+    console.log("Set hardcoded UPI ID:", hardcodedUpiId);
+    setQrValue(`upi://pay?pa=${hardcodedUpiId}&pn=WellFire&am=0&cu=INR`);
+
+    // Optional: Try fetching from API as fallback
+    try {
+      const upiFromApi = await getMerchantUpi();
+      if (upiFromApi && /^[\w.-]+@[\w.-]+$/.test(upiFromApi)) {
+        console.log("uoi", upiFromApi)
+        // setUpiId(upiFromApi);
+        setQrValue(`upi://pay?pa=${hardcodedUpiId}&pn=WellFire&am=0&cu=INR`);
+        console.log("UPI from API:", upiFromApi);
+      }
+    } catch (error) {
+      console.warn("API UPI fetch failed, using hardcoded:", error);
+    }
   };
+
   const loadStocks = async () => {
     try {
-      // Fetch real crypto market data from CoinGecko
       const marketData = await fetchMultipleCryptos();
-      // Map CoinGecko MarketData to Stock type for UI compatibility
       const stocksData: Stock[] = marketData.map((md) => ({
         id: md.id || md.symbol,
         stock_code: md.symbol,
@@ -149,7 +169,6 @@ const Index = () => {
   };
 
   const handleSell = (stock: Stock) => {
-    // Fetch user holding before opening modal
     getUserHolding(stock.id).then((holding) => {
       setSelectedStock(stock);
       setTradingType("SELL");
@@ -159,11 +178,9 @@ const Index = () => {
   };
 
   const handleTradeSuccess = () => {
-    // Refresh data after successful trade
     loadStocks();
   };
 
-  // Show all cryptos matching search (no limit)
   const filteredStocks = stocks.filter((stock) => {
     const query = searchQuery.trim().toLowerCase();
     return (
@@ -176,26 +193,28 @@ const Index = () => {
   const totalGainers = stocks.filter((s) => s.change_percent > 0).length;
   const totalLosers = stocks.filter((s) => s.change_percent < 0).length;
 
-  // Function to open UPI app with any amount
   const openUpiApp = (amount: string) => {
     if (!upiId) {
       toast.error("UPI ID not set");
       return;
     }
+    const amountNum = Number(amount);
+    if (amount && (isNaN(amountNum) || amountNum < 1)) {
+      toast.error("Enter a valid amount");
+      return;
+    }
     const upiUrl = `upi://pay?pa=${upiId}&pn=WellFire&am=${amount || '0'}&cu=INR`;
-    window.location.href = upiUrl; // Attempt to open UPI app
+    window.location.href = upiUrl;
   };
 
   return (
     <div className="space-y-6">
-      {/* Last Updated Timestamp */}
       {lastUpdated && (
         <div className="text-xs text-muted-foreground text-right">
           Last updated: {lastUpdated}
         </div>
       )}
 
-      {/* Welcome Header - Responsive Professional Layout */}
       <div className="w-full">
         <div className="flex flex-col md:flex-row md:items-center w-full gap-2 md:gap-0">
           <div className="flex-grow min-w-0 max-w-2xl overflow-visible">
@@ -207,7 +226,6 @@ const Index = () => {
               Ready to make some trades today?
             </p>
           </div>
-          {/* Desktop: Deposit & Withdraw buttons side by side */}
           <div className="hidden md:flex gap-2 items-center flex-shrink-0">
             <Button className="gap-2" onClick={() => setIsAddFundsOpen(true)}>
               <Plus className="h-4 w-4" />
@@ -222,7 +240,6 @@ const Index = () => {
             </Button>
           </div>
         </div>
-        {/* Mobile: Deposit & Withdraw below subheading, horizontal */}
         <div className="flex md:hidden gap-2 mt-4">
           <Button
             className="flex-1 gap-2"
@@ -238,7 +255,6 @@ const Index = () => {
           >
             Withdraw
           </Button>
-          {/* Withdraw Modal */}
           <Dialog open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>
             <DialogContent>
               <DialogHeader>
@@ -279,7 +295,6 @@ const Index = () => {
                       );
                       return;
                     }
-                    // UPI ID validation: must be like name@bank (alphanumeric, dots, dashes, underscores allowed)
                     const upiRegex = /^[\w.-]+@[\w.-]+$/;
                     if (!upiRegex.test(withdrawUpi)) {
                       toast.error("Enter a valid UPI ID (e.g. user@bank)");
@@ -320,7 +335,6 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Add Funds Modal (Professional UI) */}
       <Dialog open={isAddFundsOpen} onOpenChange={setIsAddFundsOpen}>
         <DialogContent>
           <DialogHeader>
@@ -336,24 +350,22 @@ const Index = () => {
               min={1}
             />
             <div className="grid grid-cols-2 gap-3">
-              {/* Button to open UPI app with or without amount */}
               <Button
                 style={{ backgroundColor: "#22c55e", color: "white", width: "100%" }}
                 className="hover:bg-green-700 active:scale-95 transition-transform"
                 onClick={() => openUpiApp(addAmount)}
+                disabled={!upiId}
               >
                 Pay with UPI
               </Button>
-              {/* Continue with screenshot */}
               <Button
                 className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
                 onClick={() => setIsUploadDialogOpen(true)}
-                disabled={!addAmount}
+                disabled={!addAmount || !upiId}
               >
                 Continue
               </Button>
             </div>
-            {/* UPI info & fallback instructions */}
             <div className="text-sm text-muted-foreground mt-2 text-center leading-relaxed">
               <p>
                 Tap <b>Pay with UPI</b> to open your preferred UPI app (like GPay, PhonePe, Paytm).
@@ -361,13 +373,12 @@ const Index = () => {
               <p className="mt-1">
                 If it doesn’t open, manually send the amount to:
               </p>
-              <p className="mt-1 font-mono text-base font-semibold">{upiId}</p>
+              <p className="mt-1 font-mono text-base font-semibold">{upiId || "UPI ID loading..."}</p>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Upload Screenshot & Transaction ID Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -391,78 +402,106 @@ const Index = () => {
             />
             <Button
               className="w-full mt-2"
+              disabled={isSubmitting || !txnId || !screenshot}
               onClick={async () => {
                 if (!txnId || !screenshot) {
-                  toast.error(
-                    "Please enter transaction ID and upload screenshot"
-                  );
+                  toast.error("Please enter transaction ID and upload screenshot");
                   return;
                 }
                 if (!user) {
                   toast.error("User not logged in");
                   return;
                 }
+                if (!/^[a-zA-Z0-9]{6,20}$/.test(txnId)) {
+                  toast.error("Enter a valid transaction ID (6-20 alphanumeric characters)");
+                  return;
+                }
+                if (screenshot.size > 5 * 1024 * 1024) {
+                  toast.error("Screenshot size must be less than 5MB");
+                  return;
+                }
+                if (!screenshot.type.startsWith('image/')) {
+                  toast.error("Please upload a valid image file (JPEG/PNG)");
+                  return;
+                }
+                const amountNum = Number(addAmount);
+                if (isNaN(amountNum) || amountNum < 1) {
+                  toast.error("Enter a valid amount");
+                  return;
+                }
+                setIsSubmitting(true);
                 let success = false;
                 let screenshot_url = "";
                 try {
-                  // Upload image to your PHP server
+                  console.log("Starting image upload...");
                   const formData = new FormData();
                   formData.append("image", screenshot);
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), 30000);
                   const res = await fetch(
                     "https://lightgray-albatross-150482.hostingersite.com/upload_web.php",
                     {
                       method: "POST",
                       body: formData,
+                      signal: controller.signal,
                     }
                   );
+                  clearTimeout(timeoutId);
                   if (!res.ok) {
                     const text = await res.text();
-                    toast.error("Image upload failed: " + text);
-                    throw new Error("Image upload failed: " + text);
+                    console.error("Upload failed with status:", res.status, "Response:", text);
+                    toast.error(`Image upload failed: HTTP ${res.status} - ${text}`);
+                    throw new Error(`Image upload failed: ${text}`);
                   }
-                  const data = await res.json();
-                  screenshot_url = data.imageUrl || "";
+                  let data;
+                  try {
+                    data = await res.json();
+                  } catch (jsonErr) {
+                    const text = await res.text();
+                    console.error("Invalid JSON response:", text, jsonErr);
+                    throw new Error("Server response is not valid JSON: " + text);
+                  }
+                  screenshot_url = data.imageUrl || data.url || "";
+                  console.log("Upload success, imageUrl:", screenshot_url);
                   if (!screenshot_url) {
-                    toast.error("No image URL returned from server");
-                    throw new Error("No image URL returned");
+                    throw new Error("No image URL returned from server");
                   }
-                  // Save to Firestore
+                  console.log("Saving to Firestore...");
                   await addDoc(collection(db, "fund_requests"), {
                     user_id: user.uid,
-                    amount: Number(addAmount),
+                    amount: amountNum,
                     txn_id: txnId,
                     screenshot_url,
                     status: "PENDING",
                     created_at: serverTimestamp(),
                   });
+                  console.log("Firestore save successful");
                   success = true;
-                } catch (err) {
+                } catch (err: any) {
                   console.error("Deposit error:", err);
-                  toast.error("Deposit error: " + (err?.message || err));
+                  const errMsg = err.name === 'AbortError' ? 'Upload timeout - server too slow' : (err.message || 'Unknown error');
+                  toast.error(`Failed to submit deposit request: ${errMsg}`);
                   success = false;
                 }
                 if (success) {
-                  toast.success(
-                    "Deposit request submitted! Admin will verify and approve."
-                  );
+                  toast.success("Deposit request submitted! Admin will verify and approve.");
                   setIsUploadDialogOpen(false);
                   setIsAddFundsOpen(false);
                   setAddAmount("");
                   setTxnId("");
                   setScreenshot(null);
                   setSelectedUpiApp("");
-                } else {
-                  toast.error("Failed to submit deposit request. Try again.");
+                  loadUserData(); // Refresh balance
                 }
+                setIsSubmitting(false);
               }}
             >
-              Submit for Approval
+              {isSubmitting ? "Submitting..." : "Submit for Approval"}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Dashboard Stats - Always 4 columns on desktop, 2x2 on mobile, gainers/losers always horizontal */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -517,7 +556,6 @@ const Index = () => {
         </Card>
       </div>
 
-      {/* Search Bar - Full width and responsive */}
       <div className="w-full flex items-center justify-center mb-6">
         <div className="relative w-full max-w-2xl">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
@@ -530,7 +568,6 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Stocks Grid */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(6)].map((_, i) => (
@@ -561,7 +598,6 @@ const Index = () => {
         </div>
       )}
 
-      {/* Trading Modal */}
       <TradingModal
         stock={selectedStock}
         type={tradingType}
