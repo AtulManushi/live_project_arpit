@@ -32,14 +32,12 @@ import { TradingModal } from "@/components/trading/TradingModal";
 import { Stock, Notification } from "@/types/trading";
 import { getUserProfile } from "@/services/firebaseApi";
 import { getUserHolding } from "@/services/userHolding";
-import { createFundRequest } from "@/services/fundRequestsApi";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "@/integrations/firebase/client";
 import {
   fetchMultipleCryptos,
   generatePriceHistory,
 } from "@/services/stockApi";
-import { getMerchantUpi } from "@/services/merchantApi";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import {
@@ -53,9 +51,7 @@ import {
 
 const Index = () => {
   const navigate = useNavigate();
-  // Auth
   const { user } = useAuth();
-  // State variables
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [userName, setUserName] = useState<string | null>(null);
   const [userBalance, setUserBalance] = useState<number>(0);
@@ -82,41 +78,24 @@ const Index = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Load data on mount
   useEffect(() => {
     setLoading(true);
-    Promise.all([loadStocks(), loadUserData(), loadMerchantUpi()]).finally(() =>
-      setLoading(false)
-    );
-    // eslint-disable-next-line
-  }, []);
-
-  const loadMerchantUpi = async () => {
-    // Hardcode a valid UPI ID - REPLACE WITH YOUR ACTUAL UPI ID
-    // const hardcodedUpiId = "wellfirecryptocompany@oksbi"; // e.g., "merchant@ybl"
+    // Set hardcoded UPI ID
     const hardcodedUpiId = "7049866959@ybl";
     if (!/^[\w.-]+@[\w.-]+$/.test(hardcodedUpiId)) {
       console.error("Hardcoded UPI ID is invalid:", hardcodedUpiId);
       toast.error("Invalid UPI ID configured. Contact support.");
-      return;
+    } else {
+      setUpiId(hardcodedUpiId);
+      console.log("Set hardcoded UPI ID:", hardcodedUpiId);
+      setQrValue(`upi://pay?pa=${hardcodedUpiId}&pn=WellFire&am=${addAmount || '0'}&cu=INR`);
     }
-    setUpiId(hardcodedUpiId);
-    console.log("Set hardcoded UPI ID:", hardcodedUpiId);
-    setQrValue(`upi://pay?pa=${hardcodedUpiId}&pn=WellFire&am=0&cu=INR`);
-
-    // Optional: Try fetching from API as fallback
-    try {
-      const upiFromApi = await getMerchantUpi();
-      if (upiFromApi && /^[\w.-]+@[\w.-]+$/.test(upiFromApi)) {
-        console.log("uoi", upiFromApi)
-        // setUpiId(upiFromApi);
-        setQrValue(`upi://pay?pa=${hardcodedUpiId}&pn=WellFire&am=0&cu=INR`);
-        console.log("UPI from API:", upiFromApi);
-      }
-    } catch (error) {
-      console.warn("API UPI fetch failed, using hardcoded:", error);
-    }
-  };
+    // Load other data
+    Promise.all([loadStocks(), loadUserData()]).finally(() =>
+      setLoading(false)
+    );
+    // eslint-disable-next-line
+  }, []);
 
   const loadStocks = async () => {
     try {
@@ -158,10 +137,6 @@ const Index = () => {
     }
   };
 
-  const loadNotifications = async () => {
-    // Notification loading removed (function does not exist)
-  };
-
   const handleBuy = (stock: Stock) => {
     setSelectedStock(stock);
     setTradingType("BUY");
@@ -199,12 +174,63 @@ const Index = () => {
       return;
     }
     const amountNum = Number(amount);
-    if (amount && (isNaN(amountNum) || amountNum < 1)) {
-      toast.error("Enter a valid amount");
+    if (!amount || isNaN(amountNum) || amountNum < 1) {
+      toast.error("Enter a valid amount (minimum 1 INR)");
       return;
     }
-    const upiUrl = `upi://pay?pa=${upiId}&pn=WellFire&am=${amount || '0'}&cu=INR`;
-    window.location.href = upiUrl;
+    const upiUrl = `upi://pay?pa=${upiId}&pn=WellFire&am=${amountNum}&cu=INR`;
+    console.log("Opening UPI URL:", upiUrl);
+    try {
+      window.location.href = upiUrl;
+    } catch (error) {
+      console.error("Failed to open UPI app:", error);
+      toast.error("Failed to open UPI app. Scan the QR code or copy the UPI ID.");
+    }
+  };
+
+  const uploadImageWithRetry = async (formData: FormData, retries = 3, delay = 2000): Promise<string> => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`Upload attempt ${attempt}/${retries}...`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000);
+        const res = await fetch(
+          "https://lightgray-albatross-150482.hostingersite.com/upload_web.php",
+          {
+            method: "POST",
+            body: formData,
+            signal: controller.signal,
+          }
+        );
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+          const text = await res.text();
+          console.error(`Upload attempt ${attempt} failed with status: ${res.status}, Response: ${text}`);
+          throw new Error(`HTTP ${res.status}: ${text}`);
+        }
+        let data;
+        try {
+          data = await res.json();
+        } catch (jsonErr) {
+          const text = await res.text();
+          console.error(`Invalid JSON response on attempt ${attempt}:`, text, jsonErr);
+          throw new Error("Server response is not valid JSON: " + text);
+        }
+        const screenshot_url = data.imageUrl || data.url || "";
+        if (!screenshot_url) {
+          throw new Error("No image URL returned from server");
+        }
+        console.log("Upload success, imageUrl:", screenshot_url);
+        return screenshot_url;
+      } catch (err) {
+        if (attempt === retries) {
+          throw err;
+        }
+        console.warn(`Upload attempt ${attempt} failed, retrying in ${delay}ms...`, err);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw new Error("Max retries reached for image upload");
   };
 
   return (
@@ -316,9 +342,8 @@ const Index = () => {
                       setWithdrawAmount("");
                       setWithdrawUpi("");
                     } catch (err) {
-                      toast.error(
-                        "Failed to submit withdrawal request. Try again."
-                      );
+                      console.error("Withdraw error:", err);
+                      toast.error("Failed to submit withdrawal request. Try again.");
                     }
                     setWithdrawLoading(false);
                   }}
@@ -326,8 +351,7 @@ const Index = () => {
                   Submit Withdrawal Request
                 </Button>
                 <div className="text-xs text-muted-foreground mt-2">
-                  Withdrawal requests are processed by admin. You will be
-                  notified after approval.
+                  Withdrawal requests are processed by admin. You will be notified after approval.
                 </div>
               </div>
             </DialogContent>
@@ -345,7 +369,10 @@ const Index = () => {
               type="number"
               placeholder="Enter amount"
               value={addAmount}
-              onChange={(e) => setAddAmount(e.target.value)}
+              onChange={(e) => {
+                setAddAmount(e.target.value);
+                setQrValue(`upi://pay?pa=${upiId}&pn=WellFire&am=${e.target.value || '0'}&cu=INR`);
+              }}
               className="w-full"
               min={1}
             />
@@ -354,7 +381,7 @@ const Index = () => {
                 style={{ backgroundColor: "#22c55e", color: "white", width: "100%" }}
                 className="hover:bg-green-700 active:scale-95 transition-transform"
                 onClick={() => openUpiApp(addAmount)}
-                disabled={!upiId}
+                disabled={!upiId || !addAmount}
               >
                 Pay with UPI
               </Button>
@@ -371,9 +398,14 @@ const Index = () => {
                 Tap <b>Pay with UPI</b> to open your preferred UPI app (like GPay, PhonePe, Paytm).
               </p>
               <p className="mt-1">
-                If it doesn’t open, manually send the amount to:
+                If it doesn’t open, scan this QR code or manually send to:
               </p>
               <p className="mt-1 font-mono text-base font-semibold">{upiId || "UPI ID loading..."}</p>
+              {qrValue && (
+                <div className="flex justify-center mt-2">
+                  <QRCodeCanvas value={qrValue} size={150} />
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>
@@ -382,122 +414,95 @@ const Index = () => {
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Upload Payment Screenshot & Transaction ID
-            </DialogTitle>
+            <DialogTitle>Upload Payment Screenshot & Transaction ID</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <input
+            <Input
               type="text"
-              placeholder="Transaction ID"
-              className="w-full p-2 border rounded"
+              placeholder="Transaction ID (e.g., T1234567890)"
               value={txnId}
               onChange={(e) => setTxnId(e.target.value)}
+              className="w-full"
             />
-            <label className="block">Payment Screenshot:</label>
-            <input
+            <Input
               type="file"
               accept="image/*"
-              onChange={(e) => setScreenshot(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  if (file.size > 5 * 1024 * 1024) {
+                    toast.error("Screenshot size must be less than 5MB");
+                    return;
+                  }
+                  if (!file.type.startsWith("image/")) {
+                    toast.error("Please upload a valid image file");
+                    return;
+                  }
+                  setScreenshot(file);
+                }
+              }}
+              className="w-full"
             />
             <Button
-              className="w-full mt-2"
-              disabled={isSubmitting || !txnId || !screenshot}
+              className="w-full bg-black text-white hover:bg-gray-900 active:scale-95 transition-transform"
+              disabled={isSubmitting || !txnId || !screenshot || !addAmount}
               onClick={async () => {
-                if (!txnId || !screenshot) {
-                  toast.error("Please enter transaction ID and upload screenshot");
-                  return;
-                }
                 if (!user) {
                   toast.error("User not logged in");
-                  return;
-                }
-                if (!/^[a-zA-Z0-9]{6,20}$/.test(txnId)) {
-                  toast.error("Enter a valid transaction ID (6-20 alphanumeric characters)");
-                  return;
-                }
-                if (screenshot.size > 5 * 1024 * 1024) {
-                  toast.error("Screenshot size must be less than 5MB");
-                  return;
-                }
-                if (!screenshot.type.startsWith('image/')) {
-                  toast.error("Please upload a valid image file (JPEG/PNG)");
+                  setIsUploadDialogOpen(false);
                   return;
                 }
                 const amountNum = Number(addAmount);
                 if (isNaN(amountNum) || amountNum < 1) {
-                  toast.error("Enter a valid amount");
+                  toast.error("Invalid amount entered");
+                  return;
+                }
+                if (!/^[a-zA-Z0-9]{10,20}$/.test(txnId)) {
+                  toast.error("Transaction ID must be alphanumeric and 10-20 characters long");
                   return;
                 }
                 setIsSubmitting(true);
-                let success = false;
-                let screenshot_url = "";
                 try {
-                  console.log("Starting image upload...");
+                  console.log("Starting upload for screenshot:", screenshot?.name);
                   const formData = new FormData();
-                  formData.append("image", screenshot);
-                  const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), 30000);
-                  const res = await fetch(
-                    "https://lightgray-albatross-150482.hostingersite.com/upload_web.php",
-                    {
-                      method: "POST",
-                      body: formData,
-                      signal: controller.signal,
-                    }
-                  );
-                  clearTimeout(timeoutId);
-                  if (!res.ok) {
-                    const text = await res.text();
-                    console.error("Upload failed with status:", res.status, "Response:", text);
-                    toast.error(`Image upload failed: HTTP ${res.status} - ${text}`);
-                    throw new Error(`Image upload failed: ${text}`);
-                  }
-                  let data;
-                  try {
-                    data = await res.json();
-                  } catch (jsonErr) {
-                    const text = await res.text();
-                    console.error("Invalid JSON response:", text, jsonErr);
-                    throw new Error("Server response is not valid JSON: " + text);
-                  }
-                  screenshot_url = data.imageUrl || data.url || "";
-                  console.log("Upload success, imageUrl:", screenshot_url);
-                  if (!screenshot_url) {
-                    throw new Error("No image URL returned from server");
-                  }
-                  console.log("Saving to Firestore...");
+                  formData.append("file", screenshot!);
+                  const screenshot_url = await uploadImageWithRetry(formData, 3, 2000);
+                  console.log("Screenshot uploaded, URL:", screenshot_url);
+
+                  console.log("Writing to Firestore: fund_requests");
                   await addDoc(collection(db, "fund_requests"), {
                     user_id: user.uid,
                     amount: amountNum,
-                    txn_id: txnId,
+                    transaction_id: txnId,
                     screenshot_url,
                     status: "PENDING",
                     created_at: serverTimestamp(),
                   });
-                  console.log("Firestore save successful");
-                  success = true;
-                } catch (err: any) {
-                  console.error("Deposit error:", err);
-                  const errMsg = err.name === 'AbortError' ? 'Upload timeout - server too slow' : (err.message || 'Unknown error');
-                  toast.error(`Failed to submit deposit request: ${errMsg}`);
-                  success = false;
-                }
-                if (success) {
-                  toast.success("Deposit request submitted! Admin will verify and approve.");
+                  console.log("Firestore write successful");
+                  toast.success("Deposit request submitted! Admin will verify and process.");
                   setIsUploadDialogOpen(false);
-                  setIsAddFundsOpen(false);
                   setAddAmount("");
                   setTxnId("");
                   setScreenshot(null);
-                  setSelectedUpiApp("");
-                  loadUserData(); // Refresh balance
+                } catch (err: any) {
+                  console.error("Submission error:", err);
+                  const errorMessage = err.message.includes("Permission denied")
+                    ? "Permission denied: Check Firestore security rules"
+                    : err.message.includes("upload_web.php")
+                    ? "Failed to upload screenshot. Check server configuration."
+                    : "Failed to submit deposit request. Details: " + err.message;
+                  toast.error(errorMessage);
+                } finally {
+                  setIsSubmitting(false);
                 }
-                setIsSubmitting(false);
               }}
             >
               {isSubmitting ? "Submitting..." : "Submit for Approval"}
             </Button>
+            <div className="text-xs text-muted-foreground mt-2">
+              After payment, enter the transaction ID and upload a screenshot of the payment confirmation.
+              Your deposit will be processed after admin verification.
+            </div>
           </div>
         </DialogContent>
       </Dialog>
